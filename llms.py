@@ -5,7 +5,7 @@ from typing import Optional
 from langchain_ollama import OllamaLLM
 
 
-def build_llm(model_name: str = "gemma3:4b",
+def build_llm(model_name: str = "gemma3:1b",
               temperature: float = 0.7,
               timeout: int = 600) -> OllamaLLM:
     """

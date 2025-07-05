@@ -64,11 +64,11 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--questions", required=True)
     ap.add_argument("--output",    required=True)
-    ap.add_argument("--model_student", default="gemma3:4b")
-    ap.add_argument("--model_tutor_at", default="gemma3:4b")
-    ap.add_argument("--model_tutor_as", default="gemma3:4b")
-    ap.add_argument("--translator_model", default="gemma3:4b")
-    ap.add_argument("--max_turns", type=int, default=10)   # 4 turnos
+    ap.add_argument("--model_student", default="gemma3:12b")
+    ap.add_argument("--model_tutor_at", default="gemma3:12b")
+    ap.add_argument("--model_tutor_as", default="gemma3:12b")
+    ap.add_argument("--translator_model", default="gemma3:12b")
+    ap.add_argument("--max_turns", type=int, default=5)   # 4 turnos
     args = ap.parse_args()
 
     # Instancias LLM

@@ -16,6 +16,11 @@ from utils.context import build_context
 # Prompt “Tabla 1” traducido (claves en inglés, contenido en español)
 TUTOR_PROMPT_ES = """Eres un tutor de matemáticas experto.
 Responde SOLO un objeto JSON con las claves EXACTAS:
+
+Eval of Student Response / Códigos de evaluación (a–g): 
+Action Based on Eval / Acciones pedagógicas (1–12): 1 = Señalar error y dar pista; 2 = Revelar solución tras varios intentos; 3 = Reforzar respuesta correcta; 4 = Reconocer acierto parcial y guiar el resto; 5 = Dividir el problema en pasos más pequeños; 6 = Plantear pregunta guía; 7 = Proporcionar solución parcial; 8 = Motivar y animar a continuar; 9 = Resumir progreso hasta el momento; 10 = Explicar solución completa; 11 = Verificar comprensión del alumno; 12 = Cerrar subproblema / pasar al siguiente
+Subproblem State / Estados de subproblema (w–z): 
+
 {{
   "Eval of Student Response": "a",
   "Action Based on Eval": "1",
@@ -24,9 +29,9 @@ Responde SOLO un objeto JSON con las claves EXACTAS:
   "Tutorbot": "…explicación paso a paso en español…"
 }}
 
-• ‘Eval of Student Response’ debe ser una letra a–g (rúbrica)
-• ‘Action Based on Eval’ un número 1–12 (plan de acción)
-• ‘Subproblem State’ una letra w/x/y/z
+• ‘Eval of Student Response’ debe ser una letra a–g (a = Respuesta incorrecta; b = Respuesta correcta; c = Parcialmente correcta; d = Ambigua / muy breve; e = Fuera de tema; f = Pregunta del estudiante; g = Sin evaluación (N/A))
+• ‘Action Based on Eval’ un número 1–12 (1 = Señalar error y dar pista; 2 = Revelar solución tras varios intentos; 3 = Reforzar respuesta correcta; 4 = Reconocer acierto parcial y guiar el resto; 5 = Dividir el problema en pasos más pequeños; 6 = Plantear pregunta guía; 7 = Proporcionar solución parcial; 8 = Motivar y animar a continuar; 9 = Resumir progreso hasta el momento; 10 = Explicar solución completa; 11 = Verificar comprensión del alumno; 12 = Cerrar subproblema / pasar al siguiente)
+• ‘Subproblem State’ una letra (w = Nuevo subproblema; x = Subproblema en curso; y = Subproblema resuelto; z = Problema principal resuelto)
 • ‘Subproblem’ describe la sub-tarea actual
 • ‘Tutorbot’ es la respuesta completa al alumno
 NO añadas comentarios ni texto fuera del JSON.
@@ -36,6 +41,10 @@ CONVERSACIÓN HASTA AHORA (si existe):
 PREGUNTA / RESPUESTA ACTUAL DEL ALUMNO:
 {student}
 """
+
+print("Iniciando con: ", TUTOR_PROMPT_ES)
+
+
 # --- Prompt para el agente-alumno (AG) en los turnos 1-3 -----------------
 STUDENT_FOLLOWUP_PROMPT = """Eres un alumno de primaria que
 intenta resolver el ejercicio de matemáticas. Basado en la
@@ -59,7 +68,7 @@ def main() -> None:
     ap.add_argument("--model_tutor_at", default="gemma3:4b")
     ap.add_argument("--model_tutor_as", default="gemma3:4b")
     ap.add_argument("--translator_model", default="gemma3:4b")
-    ap.add_argument("--max_turns", type=int, default=4)   # 4 turnos
+    ap.add_argument("--max_turns", type=int, default=10)   # 4 turnos
     args = ap.parse_args()
 
     # Instancias LLM
@@ -110,6 +119,10 @@ def main() -> None:
                 at_json = parse_json_or_retry(AT, tutor_prompt_filled)
                 as_json = parse_json_or_retry(AS, tutor_prompt_filled)
 
+                # Si cualquiera falló → avisamos y pasamos al siguiente problema
+                if at_json is None or as_json is None:
+                    print(f"⚠️  Saltando pregunta (id={conv_id}) por JSON inválido")
+                    break   # abandona los 4 turnos de esta pregunta y continúa con la siguiente
                 at_json_es = {k: translate(v) for k, v in at_json.items()}
                 as_json_es = {k: translate(v) for k, v in as_json.items()}
 

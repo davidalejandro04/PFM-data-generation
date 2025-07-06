@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-build_dp.py – contexto = resumen del estado actual del problema.
+build_dp.py
+Genera un Preference Dataset Dp a partir de Dc **creando** nuevas respuestas
+(chosen / rejected) con un único modelo local (gemma3) conforme a la rúbrica.
+
+Uso:
+  python build_dp.py --dc data/dc.jsonl --dp data/dp.jsonl
+Opcional:
+  --model gemma3:4b
 """
 
 import json, argparse, collections, textwrap
@@ -8,10 +15,8 @@ from pathlib import Path
 from tqdm import tqdm
 
 from llms import build_llm
-from utils.context import build_context        # para concatenar sin numerar
+from utils.context import build_context   # re-usa para limpiar saltos
 
-
-# --------------------------- funciones auxiliares ------------------------
 def summarized_context(llm, history):
     """
     history: list[{"student": str, "tutor": str}]
@@ -32,80 +37,150 @@ def summarized_context(llm, history):
         Resumen:
     """)
     return llm.invoke(prompt).strip()
-
-
 def generate_response(llm, role_prompt, ctx):
     prompt = role_prompt.format(contexto=ctx)
     return llm.invoke(prompt).strip()
 
-# --------------------------- prompts fijos -------------------------------
-PROMPT_CHOSEN = textwrap.dedent("""
-    Eres un tutor de matemáticas paciente.
-    Basándote en el RESUMEN a continuación, responde
-    resaltando lo que el alumno ha hecho bien y haz UNA pregunta
-    que lo ayude a avanzar. Finaliza tu mensaje con un signo de interrogación.
+# ---------- función segura para formatear + llamar al modelo -------------
+def safe_generate(llm, role_prompt: str, ctx: str) -> str | None:
+    """
+    Devuelve la respuesta del modelo o None si algo falla.
+    • Solo se aplica .format() si la cadena contiene el marcador '{contexto}'.
+    • Si se lanza cualquier excepción se captura y se retorna None.
+    """
+    try:
+        if "{contexto}" in role_prompt:
+            prompt = role_prompt.format(contexto=ctx)
+        else:
+            prompt = role_prompt
+        return llm.invoke(prompt).strip()
+    except Exception as e:
+        print(f"⚠️  Se omitió un turno por error: {e}")
+        return None
 
-    RESUMEN:
-    {contexto}
+def load_processed_conversations(dp_path: Path) -> set[str]:
+    """
+    Devuelve un set de conversation_id ya presentes en el DP.
+    Si el archivo no existe aún, devuelve set vacío.
+    """
+    processed = set()
+    if dp_path.exists():
+        with open(dp_path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    processed.add(json.loads(line)["conversation_id"])
+                except Exception:
+                    pass
+    return processed
+# ---------------------------------------------------------------- helper
+def numbered_context(history):
+    """
+    history: list[{"student": str, "tutor": str}]
+    Devuelve string numerado:
+       1. Alumno: ...
+          Tutor : ...
+    """
+    lines = []
+    for i, pair in enumerate(history, 1):
+        a = pair["student"].replace("\n", " ")
+        t = pair["tutor"].replace("\n", " ")
+        lines.append(f"{i}. Alumno: {a}\n   Tutor : {t}")
+    return "\n".join(lines)
 
-    Tu respuesta:
-""")
-
-PROMPT_REJECTED = textwrap.dedent("""
-    Eres un tutor que entrega directamente el resultado del paso actual
-    sin fomentar el diálogo. Basándote en el RESUMEN a continuación,
-    explica brevemente el cálculo o valor requerido y no hagas preguntas.
-
-    RESUMEN:
-    {contexto}
-
-    Tu respuesta:
-""")
-
-# -------------------------------------------------------------------------
+# --------------------------------------------------------------- main
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dc", required=True)
     ap.add_argument("--dp", required=True)
-    ap.add_argument("--model", default="gemma3:4b")
+    ap.add_argument("--model", default="gemma3:4b",
+                    help="Modelo Ollama para generar chosen / rejected")
     args = ap.parse_args()
 
     llm = build_llm(args.model, temperature=0.3, timeout=600)
 
-    # 1) Agrupar Dc por conversación
+    # 1) agrupar Dc
     convs = collections.defaultdict(list)
     with open(args.dc, encoding="utf-8") as fdc:
         for line in fdc:
             row = json.loads(line)
             convs[row["conversation_id"]].append(row)
 
-    # 2) Procesar
     out_path = Path(args.dp)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(out_path, "w", encoding="utf-8") as fdp:
+    processed_cids = load_processed_conversations(out_path)
+
+    # 2) procesar conversación
+    with open(out_path, "a", encoding="utf-8") as fdp:   # append mode
         for cid, turns in tqdm(convs.items(), desc="Generando Dp"):
+            if cid in processed_cids:
+                continue  # 🔹  ya se procesó esta conversación            turns.sort(key=lambda r: r["turn_idx"])
             turns.sort(key=lambda r: r["turn_idx"])
             history = []
 
+
             for turn in turns:
-                # ---- construir resumen del contexto -----------------------
-                ctx_summary = summarized_context(llm, history)
 
-                # ---- generar chosen & rejected ----------------------------
-                chosen   = generate_response(llm, PROMPT_CHOSEN, ctx_summary)
-                rejected = generate_response(llm, PROMPT_REJECTED, ctx_summary)
 
-                # ---- registro ---------------------------------------------
+                # ---- construir contexto numerado incluyendo alumno actual
+                ctx = numbered_context(
+                    history + [{"student": turn["student"], "tutor": ""}]
+                )
+
+                # ---- generar CHOSEN (andamiaje)
+                prompt_chosen = textwrap.dedent(f"""
+                Eres un tutor de matemáticas paciente. Basándote en el
+                diálogo a continuación, responde refiriéndote al razonamiento
+                del alumno, resaltando lo que haya hecho bien y formulando
+                UNA pregunta que lo ayude a avanzar al siguiente paso. 
+                En caso de que el estudiante haya cometdo un error, señala el error
+                y ofrece una pista para corregirlo.
+                
+                DIÁLOGO:
+                {ctx}
+                
+                Tu respuesta:
+                """)
+
+                chosen = safe_generate(llm, prompt_chosen, ctx)
+
+                # ---- generar REJECTED (respuesta directa)
+                PROMPT_REJECTED = textwrap.dedent(f"""
+                Eres un tutor que proporciona la respuesta del paso actual
+                sin fomentar diálogo. Lee el contexto y ofrece el resultado
+                directamente, sin preguntas ni elogios adicionales.
+                
+                DIÁLOGO:
+                {ctx}
+                
+                Tu respuesta:
+                """)
+                rejected = safe_generate(llm, PROMPT_REJECTED, ctx)
+
+                if chosen is None or rejected is None:
+                    continue  # pasa al siguiente turno sin detener el programa
+                # ---- registro -------------------------------------------------
+
+                if turn==0:
+                    # primer turno, no hay contexto previo
+                    ctx_out = turn["student"]
+                else:
+                    ctx_out = summarized_context(llm, history)
+
+                if ctx_out=="":
+                    ctx_out = turn["student"]
+
                 rec = {
-                    "context": ctx_summary,
+                    "conversation_id": cid,        #  ← NUEVO
+                    "context": ctx_out,
                     "chosen":  chosen,
                     "rejected": rejected,
                     "preference": True
                 }
                 fdp.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-                # ---- actualizar historial con la respuesta chosen ---------
+                
+                # ---- actualizar historial (con chosen) -----------------------
                 history.append({"student": turn["student"], "tutor": chosen})
 
 

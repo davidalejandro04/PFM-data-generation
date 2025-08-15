@@ -1,0 +1,8 @@
+,EDA_stats
+n_turns_total,4659.0
+n_conversations,966.0
+mean_turns_per_conv,4.8229813664596275
+median_turns_per_conv,5.0
+mean_student_chars,138.55720111611933
+mean_tutor_AT_chars,333.2114187593904
+mean_tutor_AS_chars,332.0036488516849

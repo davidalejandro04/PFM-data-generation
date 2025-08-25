@@ -101,3 +101,16 @@ El pipeline está diseñado para ser modular: cada etapa se puede ejecutar de fo
 Se recomienda mantener los archivos .jsonl intermedios para depuración y trazabilidad.
 
 Los modelos Ollama deben estar previamente descargados y disponibles localmente para evitar llamadas externas.
+
+## 6. Usar datasets
+
+```
+from datasets import load_dataset
+
+# Login using e.g. `huggingface-cli login` to access this dataset
+d0 = load_dataset("dpabonc/d0")
+dp = load_dataset("dpabonc/dp")
+dc = load_dataset("dpabonc/dc")
+
+```
+
